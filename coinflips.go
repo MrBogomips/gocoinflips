@@ -14,19 +14,23 @@ const (
 	tail = "tail"
 )
 
-func coinFlip() string {
-	if rand.Intn(2) == 1 {
-		return head
-	} else {
-		return tail
+func coinFlipGenerator(throws chan<- string) {
+	n := int(numOfThrows)
+	for ; n > 0; n-- {
+		if rand.Intn(2) == 1 {
+			throws <- head
+		} else {
+			throws <- tail
+		}
 	}
+	close(throws)
 }
 
 var numOfThrows uint
 var oneliner bool
 var printFormat string
 
-type printer func(throws <-chan string)
+type printer func(throws <-chan string, done *sync.WaitGroup)
 
 var printerFuncs map[string]printer
 
@@ -54,7 +58,7 @@ func getFormatString() string {
 	return fmt.Sprintf("(%%%dd): %%s     Heads: %%%dd, Tails: %%%dd%s", digits, digits, digits, eol)
 }
 
-func humanPrinter(throws <-chan string) {
+func humanPrinter(throws <-chan string, done *sync.WaitGroup) {
 	format := getFormatString()
 	heads, tails, index := 0, 0, 0
 	for t := range throws {
@@ -70,10 +74,10 @@ func humanPrinter(throws <-chan string) {
 	if oneliner {
 		fmt.Println()
 	}
-	wg.Done()
+	done.Done()
 }
 
-func csvPrinter(throws <-chan string) {
+func csvPrinter(throws <-chan string, done *sync.WaitGroup) {
 	bol := true
 	for t := range throws {
 		if !bol {
@@ -83,26 +87,21 @@ func csvPrinter(throws <-chan string) {
 		bol = false
 	}
 	fmt.Println()
-	wg.Done()
+	done.Done()
 }
-
-var wg = sync.WaitGroup{}
 
 func main() {
 	flag.Parse()
-	n := int(numOfThrows)
-	throws := make(chan string)
 	printer, found := printerFuncs[printFormat]
 	if !found {
 		fmt.Printf("Unrecognized output format %q\n", printFormat)
 		flag.Usage()
 		os.Exit(1)
 	}
-	wg.Add(1)
-	go printer(throws)
-	for ; n > 0; n-- {
-		throws <- coinFlip()
-	}
-	close(throws)
-	wg.Wait()
+	throws := make(chan string)
+	done := sync.WaitGroup{}
+	done.Add(1)
+	go coinFlipGenerator(throws)
+	go printer(throws, &done)
+	done.Wait()
 }
